@@ -16,3 +16,4 @@ Alterações nesta tabela exigem aprovação do coordenador técnico.
 | Pest | 4.7 | Testes rodam hoje em SQLite em memória; migrar para MySQL de teste |
 | Larastan | 3.13 | Nível 5 (`phpstan.neon`) |
 | Pint | 1.32 | Padrão Laravel |
+| Fuso horário | America/Cuiaba | `config/app.php` |
