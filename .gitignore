@@ -1,0 +1,15 @@
+/vendor/
+/node_modules/
+.env
+.env.backup
+.env.*.local
+/storage/*.key
+/public/hot
+/public/storage
+/public/build
+/public/index.html
+.phpunit.result.cache
+*.sql
+*.sql.gz
+.idea/
+.vscode/
