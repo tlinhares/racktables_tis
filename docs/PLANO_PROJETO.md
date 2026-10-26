@@ -1,6 +1,6 @@
 # RACKMANAGER IA — PLANO MESTRE DO PROJETO
 
-> **Versão:** 2.0 — revisão do plano inicial (v1.0)  
+> **Versão:** 2.1 — revisão do plano inicial (v1.0)  
 > **Idioma:** Português do Brasil  
 > **Status:** Planejamento; nada foi instalado ou implementado por este documento.  
 > **Repositório:** https://github.com/tlinhares/racktables_tis  
@@ -19,6 +19,16 @@
 | Equipe 3 | Plataforma e DevOps | Segurança/acesso (TI 05) e Qualidade/CI (TI 06) |
 | CODEOWNERS | Times de organização | Usuários individuais (repositório em conta pessoal) |
 | Modelo de dados | — | Correções: `vrf_id`, ocupação de rack por U, porta única por conexão, sem `rack_id` em Device |
+
+### O que mudou da v2.0 para a v2.1
+
+| Tema | v2.1 |
+|---|---|
+| Integração FortiGate | **Novo módulo `Firewall`** (seção 7.1): consulta somente leitura via API, backups agendados e manuais, conciliação com o inventário |
+| Escopo de acesso | **Por site em todo o sistema** (seção 6.5): cada TI só enxerga os dados dos sites liberados pelo coordenador |
+| Ambientes | `racktables.aom.org.br` é a homologação até a entrada em produção; depois disso vira produção e um novo VirtualHost de homologação é criado |
+| Fuso horário | `America/Cuiaba` |
+| Banco de testes MySQL | Adiado até existirem migrações com recursos específicos do MySQL; até lá, SQLite em memória |
 
 ---
 
@@ -87,8 +97,12 @@ Um único projeto Laravel com limites claros entre módulos é mais simples de e
 | Ambiente | Onde | Banco | Quem altera o banco |
 |---|---|---|---|
 | **Desenvolvimento** | Servidor de desenvolvimento (recomendado) — uma pasta, um VirtualHost e um banco por TI | `rackmanager_dev_ti01` … `rackmanager_dev_ti06` | Claude/TI podem rodar migrações **apenas no próprio banco de dev** |
-| **Homologação** | Ubuntu, VirtualHost próprio | `rackmanager_hml` | **Somente o coordenador** |
-| **Produção** | Ubuntu (servidor separado, recomendado) | `rackmanager_prod` | **Somente o coordenador** |
+| **Homologação** | `https://racktables.aom.org.br` (servidor 10.144.128.58) | `rackmanager` | **Somente o coordenador** |
+| **Produção** | Mesmo VirtualHost, após a homologação do MVP | `rackmanager` | **Somente o coordenador** |
+
+**Decisão (2026-10-26):** enquanto o projeto não entra em produção, `racktables.aom.org.br` funciona como homologação. Quando o MVP for homologado, esse ambiente passa a ser a produção e, a partir daí, é criado um VirtualHost e um banco separados de homologação (ex.: `racktables-hml.aom.org.br` / `rackmanager_hml`), para que mudanças novas sejam testadas antes de chegar aos usuários.
+
+**Banco de testes automatizados:** os testes (Pest) apagam e recriam as tabelas do banco em que rodam, por isso **nunca** usam o `rackmanager`. Hoje rodam em SQLite em memória; quando as migrações usarem recursos específicos do MySQL (semana 3), o coordenador cria um banco descartável `rackmanager_test`. O CI do GitHub usa um MySQL próprio do runner.
 
 **Por que desenvolvimento centralizado no servidor:** sem Docker, montar PHP + MySQL + Apache em seis computadores diferentes é o maior risco de atraso para quem não programa. No servidor, o coordenador prepara o ambiente uma vez e cada TI acessa por SSH (terminal ou VS Code Remote-SSH) e roda o Claude Code ali. Alternativa: ambientes locais com Laravel Herd ou Laragon — decidir na semana 1.
 
@@ -302,7 +316,7 @@ Os TIs **não precisam decorar comandos Git**. O Claude executa `git switch`, `g
 | Rack | id, room_id, nome, altura_u | Racks |
 | Manufacturer | id, nome (único) | Inventory |
 | DeviceModel | id, manufacturer_id, nome, altura_u, profundidade (`full`/`half`) | Inventory |
-| Device | id, model_id, room_id opcional, nome, serial, patrimônio, status | Inventory |
+| Device | id, site_id, model_id, room_id opcional, nome, serial, patrimônio, status | Inventory |
 | RackPlacement | id, device_id (único), rack_id, u_inicio, face (`front`/`rear`/`both`) | Racks |
 | **RackUnit** | rack_id, u, face, device_id — **único (rack_id, u, face)** | Racks |
 | VRF | id, nome, rd opcional | IPAM |
@@ -344,6 +358,27 @@ Os TIs **não precisam decorar comandos Git**. O Claude executa `git switch`, `g
 - VLAN entre 1 e 4094 (`CHECK`).
 - Toda alteração administrativa ou crítica gera registro de auditoria.
 
+### 6.5 Escopo por site (decisão de 2026-10-26)
+
+Cada TI só enxerga e altera os dados dos **sites liberados pelo coordenador** — em todo o sistema, não só no FortiGate.
+
+| Entidade | Escopo |
+|---|---|
+| Site | Raiz do escopo |
+| Room, Rack, RackPlacement | Pelo site da sala |
+| Device | `site_id` obrigatório (também para equipamentos fora de rack) |
+| Port, Connection | Pelo site do equipamento |
+| VRF, NetworkPrefix, IPAddress, VLAN | `site_id` opcional; nulo = **global**, visível a todos e editável só por administrador |
+| Manufacturer, DeviceModel | Globais (catálogo compartilhado) |
+| FortiGate e backups | Pelo site do equipamento |
+
+**Tabela de acesso:** `site_user` (user_id, site_id, papel) — o mesmo TI pode ser operador em um site e leitor em outro. O papel **administrador** (coordenador) vê todos os sites.
+
+**Regras técnicas:**
+- O filtro por site é aplicado **no servidor** (global scope do Eloquent + policies), nunca só escondendo itens na tela.
+- Teste obrigatório para cada módulo: usuário do site A não lista, não abre e não altera registro do site B (nem pela URL direta).
+- Conexão entre portas de sites diferentes: bloqueada no MVP.
+
 ---
 
 ## 7. MVP — critérios de aceitação
@@ -380,7 +415,86 @@ Os TIs **não precisam decorar comandos Git**. O Claude executa `git switch`, `g
 - Backup e restauração testados pelo coordenador.
 - CI obrigatório antes do merge.
 
-**Fora do MVP:** descoberta automática, SNMP, AD/LDAP, importação massiva, automação de switches, CMDB completa, topologia dinâmica, alta disponibilidade, migração de dados de RackTables existente.
+**Fora do MVP:** SNMP, AD/LDAP, importação massiva, automação de switches, CMDB completa, topologia dinâmica, alta disponibilidade, migração de dados de RackTables existente. A integração com FortiGate é a **fase 2** (seção 7.1), com prova de conceito antecipada.
+
+### 7.1 Módulo Firewall — integração FortiGate (fase 2)
+
+**Objetivo:** cada TI consulta o FortiGate do seu site pela API, gera e guarda backups no RackManager, e o sistema mostra o que o FortiGate enxerga que **já está** ou **não está** no inventário.
+
+**Decisões tomadas (2026-10-26):**
+
+| Tema | Decisão |
+|---|---|
+| Acesso ao FortiGate | **Somente leitura.** O sistema nunca altera configuração do firewall |
+| Conciliação | **Os dois:** o próprio FortiGate (por serial) e os hosts que ele enxerga (por IP e MAC) |
+| Escopo | Por site, como todo o sistema (seção 6.5) |
+| Backup | **Agendado (diário, madrugada) + manual** sob demanda |
+
+**Arquitetura:**
+
+```text
+TI (navegador) ──► RackManager (10.144.128.58)
+                     │  1. confere: TI tem acesso ao site e nível suficiente?
+                     │  2. decifra o token (o TI nunca vê)
+                     ▼
+                  VPN ──► API REST do FortiGate (perfil somente leitura,
+                                                trusthost = IP do RackManager)
+```
+
+O TI **nunca** fala direto com o FortiGate nem vê a credencial. Só o coordenador cadastra o endereço do FortiGate — o TI não consegue apontar o servidor para um IP qualquer da VPN.
+
+**Configuração em cada FortiGate (coordenador):**
+- Criar um *REST API Admin* com perfil de acesso **somente leitura**.
+- Restringir *trusthost* ao IP do servidor RackManager.
+- Gerar o token e cadastrar no RackManager, junto com a impressão digital do certificado HTTPS do FortiGate (certificado autoassinado é aceito apenas se a impressão digital conferir).
+
+**Níveis de acesso por TI e site:**
+
+| Nível | Permite |
+|---|---|
+| Consultar | Status, interfaces, objetos de endereço, regras, rotas, ARP, DHCP, dispositivos detectados |
+| Backup | Gerar backup manual e baixar backups |
+| Gerenciar conexão | Cadastrar/trocar endereço, token e certificado — **só o coordenador** |
+
+**Backups:**
+- Agendados (diário, madrugada) e manuais; executados em fila (Laravel queue), sem travar a tela.
+- Guardados fora da pasta pública, **criptografados**, com hash SHA-256, data, autor, serial e versão do FortiOS.
+- O arquivo contém segredos do firewall (hashes de senha, chaves de VPN e de certificados): download restrito ao nível Backup e sempre auditado.
+- Retenção a definir pelo coordenador (sugestão: diários por 30 dias, mensais por 12 meses).
+- Evolução: comparação entre dois backups ("o que mudou desde ontem").
+
+**Conciliação com o inventário:**
+
+| Do FortiGate | Comparado com | Resultado |
+|---|---|---|
+| O próprio FortiGate (serial, modelo, firmware, hostname) | `Device.serial` | ✅ cadastrado / ➕ cadastrar com dados pré-preenchidos |
+| Interfaces | `Port` do equipamento | ✅ existe / ➕ falta / ⚠️ diferente |
+| ARP, DHCP, dispositivos detectados (IP + MAC) | `IPAddress` e `Port.mac` | ✅ cadastrado / ⚠️ IP conhecido com MAC diferente / ➕ não cadastrado |
+
+O sistema **sugere, nunca cadastra sozinho**: o TI confirma item a item, e cada confirmação é auditada.
+
+**Entidades adicionais:**
+
+| Entidade | Campos iniciais |
+|---|---|
+| FirewallEndpoint | id, device_id (único), host, porta, vdom, token (criptografado), cert_fingerprint, fortios_version, last_seen_at, status |
+| FirewallBackup | id, device_id, origem (`agendado`/`manual`), requested_by, taken_at, caminho, tamanho, sha256, fortios_version, status |
+| FirewallSnapshot | id, device_id, tipo (`arp`/`dhcp`/`interfaces`/`policies`/`addresses`/`detected`), coletado_em, dados (JSON) |
+
+**Infraestrutura necessária (coordenador):** worker da fila como serviço systemd e o agendador do Laravel no cron (`schedule:run` a cada minuto); rota pela VPN do servidor até a interface de gerência de cada FortiGate.
+
+**Riscos específicos:**
+- Endpoints da API (principalmente o de backup) variam entre versões do FortiOS — validar na prova de conceito com as versões em uso.
+- Token vazado = leitura completa da configuração do firewall: token só de leitura, trusthost, criptografia no banco, rotação periódica.
+- FortiGate fora do ar ou VPN instável: timeout curto, nova tentativa na fila, status visível na tela.
+
+**Critérios de aceitação:**
+- Coordenador cadastra um FortiGate e o teste de conexão mostra serial e versão.
+- TI com nível Consultar vê os dados do FortiGate do seu site e **não** vê os de outro site.
+- TI sem nível Backup não gera nem baixa backup.
+- Backup agendado roda sozinho e aparece na lista com hash e data.
+- Conciliação mostra corretamente cadastrado / não cadastrado / divergente.
+- Token nunca aparece em tela, log, auditoria ou resposta da API.
 
 ---
 
@@ -808,6 +922,16 @@ para a release anterior (+ restaurar backup se houve migração)
 
 Estimativa experimental, não promessa. Para uma equipe que não programa, as semanas 1 e 2 (ambiente e treinamento) são as que mais definem o ritmo do resto.
 
+**Fase 2 — Firewall/FortiGate (semanas 9 a 12, após o MVP):**
+
+| Quando | Entrega |
+|---|---|
+| Semana 2 (antecipado) | **Prova de conceito:** coordenador cria o API Admin somente leitura em um FortiGate; um script lê `system/status` pela VPN. Valida rede, token, certificado e versão do FortiOS |
+| 9 | Cadastro de FortiGate, teste de conexão, consultas (status, interfaces, ARP, DHCP) |
+| 10 | Backups manual e agendado, fila e agendador |
+| 11 | Conciliação com inventário e IPAM |
+| 12 | Testes de acesso por site, aceitação e deploy autorizado |
+
 ---
 
 ## 18. Backlog inicial
@@ -832,8 +956,14 @@ Estimativa experimental, não promessa. Para uma equipe que não programa, as se
 | #16 | TI 06 | Roteiros de aceitação e manual do usuário |
 | #17 | Coordenador | `deploy/deploy.sh`, VirtualHost de homologação, backup/restauração |
 | #18 | Todos | Testes integrados e demonstração do MVP |
+| #19 | TI 05 | Escopo por site: `site_user`, global scope e testes de isolamento entre sites |
+| #20 | Coordenador | Prova de conceito FortiGate (API Admin somente leitura + chamada de status pela VPN) |
+| #21 | Coordenador | Worker da fila (systemd) e agendador (cron) no servidor |
+| #22 | TI 04 + coordenador | Cadastro de FortiGate, token criptografado, teste de conexão e consultas |
+| #23 | TI 04 | Backups manual e agendado, armazenamento criptografado e download auditado |
+| #24 | TI 03 + TI 04 | Conciliação FortiGate × inventário/IPAM |
 
-Números são sugestões; usar os IDs atribuídos pelo GitHub. **#08 a #15 só começam após #07 aprovada.**
+Números são sugestões; usar os IDs atribuídos pelo GitHub. **#08 a #15 só começam após #07 aprovada. #19 deve estar pronta antes dos CRUDs, porque todos dependem do escopo por site. #22 a #24 são da fase 2.**
 
 ---
 
@@ -998,6 +1128,8 @@ Aguarde autorização do coordenador.
 11. Backup: frequência, retenção, RPO e RTO.
 12. Janela de deploy e forma de registro da autorização.
 13. Métricas e formato da apresentação final.
+14. FortiGates: quantidade, versões do FortiOS, existência de FortiManager e rota da VPN até a gerência de cada um.
+15. Retenção dos backups de FortiGate.
 
 ---
 
