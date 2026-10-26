@@ -2,7 +2,8 @@
   "permissions": {
     "deny": [
       "Read(./.env)",
-      "Read(./.env.*)",
+      "Read(./.env.production)",
+      "Read(./.env.backup)",
       "Edit(./.env)",
       "Bash(cat .env:*)",
       "Bash(git push --force:*)",
