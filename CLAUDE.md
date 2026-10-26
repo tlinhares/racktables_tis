@@ -14,7 +14,8 @@ e o único que autoriza deploys.
 ## Stack
 PHP 8.3, Laravel 13, Blade, Livewire 4, MySQL 8 (InnoDB, utf8mb4),
 Apache 2.4 + PHP-FPM no Ubuntu, Pest, Larastan, Pint, GitHub Actions.
-NÃO usar Docker, Nginx ou PostgreSQL.
+O banco é exclusivamente MySQL e o servidor web exclusivamente Apache; instalação nativa, sem containers.
+Não proponha trocar essas tecnologias.
 Versões aprovadas: docs/VERSOES.md. Plano completo: docs/PLANO_PROJETO.md.
 Não instale PHP, Composer ou pacotes do sistema: o ambiente é mantido pelo coordenador.
 
